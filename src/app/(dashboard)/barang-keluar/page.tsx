@@ -1,13 +1,40 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Plus, Search, Eye } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { MobileCard, MobileCardField, MobileCardActions } from "@/components/ui/mobile-card";
+import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
+import {
+  Plus,
+  Search,
+  Eye,
+  Trash2,
+  ArrowUpFromLine,
+  X,
+  TrendingDown,
+  Calendar,
+  Package,
+  AlertTriangle,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase/client";
 import { format } from "date-fns";
@@ -19,37 +46,39 @@ export default function BarangKeluarPage() {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [selectedTransaksi, setSelectedTransaksi] = useState<BarangKeluar | null>(null);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [selectedTransaksi, setSelectedTransaksi] =
+    useState<BarangKeluar | null>(null);
   const [form, setForm] = useState({
     tanggal: format(new Date(), "yyyy-MM-dd"),
     barang_id: "",
-    jumlah: 1,
+    jumlah: "",
     tujuan: "",
   });
   const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(true);
 
-  useEffect(() => {
-    fetchTransaksi();
-    fetchBarang();
+  const fetchData = useCallback(async () => {
+    setFetching(true);
+    const [transaksiRes, barangRes] = await Promise.all([
+      supabase
+        .from("barang_keluar")
+        .select("*, barang(*)")
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("barang")
+        .select("*")
+        .eq("status", "aktif")
+        .order("nama"),
+    ]);
+    setTransaksiList(transaksiRes.data || []);
+    setBarangList(barangRes.data || []);
+    setFetching(false);
   }, []);
 
-  async function fetchTransaksi() {
-    const { data, error } = await supabase
-      .from("barang_keluar")
-      .select("*, barang(*)")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      toast.error("Gagal memuat data transaksi");
-      return;
-    }
-    setTransaksiList(data || []);
-  }
-
-  async function fetchBarang() {
-    const { data } = await supabase.from("barang").select("*").eq("status", "aktif").order("nama");
-    setBarangList(data || []);
-  }
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -61,8 +90,15 @@ export default function BarangKeluarPage() {
       return;
     }
 
-    if (form.jumlah < 1) {
+    const jumlah = form.jumlah === "" ? 0 : Number(form.jumlah);
+    if (jumlah < 1) {
       toast.error("Jumlah minimal 1");
+      setLoading(false);
+      return;
+    }
+
+    if (!form.tujuan.trim()) {
+      toast.error("Tujuan tidak boleh kosong");
       setLoading(false);
       return;
     }
@@ -74,22 +110,22 @@ export default function BarangKeluarPage() {
       return;
     }
 
-    if (barang.stok < form.jumlah) {
+    if (barang.stok < jumlah) {
       toast.error(`Stok tidak mencukupi. Stok tersedia: ${barang.stok}`);
       setLoading(false);
       return;
     }
 
     const nomor_transaksi = `BK-${Date.now()}`;
-
-    const { error: insertError } = await supabase.from("barang_keluar").insert({
-      nomor_transaksi,
-      tanggal: form.tanggal,
-      barang_id: form.barang_id,
-      jumlah: form.jumlah,
-      tujuan: form.tujuan,
-    });
-
+    const { error: insertError } = await supabase
+      .from("barang_keluar")
+      .insert({
+        nomor_transaksi,
+        tanggal: form.tanggal,
+        barang_id: form.barang_id,
+        jumlah,
+        tujuan: form.tujuan,
+      });
     if (insertError) {
       toast.error("Gagal menyimpan transaksi");
       setLoading(false);
@@ -98,9 +134,8 @@ export default function BarangKeluarPage() {
 
     const { error: updateError } = await supabase
       .from("barang")
-      .update({ stok: barang.stok - form.jumlah })
+      .update({ stok: barang.stok - jumlah })
       .eq("id", form.barang_id);
-
     if (updateError) {
       toast.error("Gagal update stok barang");
       setLoading(false);
@@ -109,10 +144,41 @@ export default function BarangKeluarPage() {
 
     toast.success("Barang keluar berhasil ditambahkan");
     setOpen(false);
-    setForm({ tanggal: format(new Date(), "yyyy-MM-dd"), barang_id: "", jumlah: 1, tujuan: "" });
+    setForm({
+      tanggal: format(new Date(), "yyyy-MM-dd"),
+      barang_id: "",
+      jumlah: "",
+      tujuan: "",
+    });
     setLoading(false);
-    fetchTransaksi();
-    fetchBarang();
+    fetchData();
+  }
+
+  async function handleDelete() {
+    if (!deleteId) return;
+    const transaksi = transaksiList.find((t) => t.id === deleteId);
+    if (!transaksi) return;
+
+    const { error } = await supabase
+      .from("barang_keluar")
+      .delete()
+      .eq("id", deleteId);
+    if (error) {
+      toast.error("Gagal menghapus transaksi");
+      return;
+    }
+
+    const barang = barangList.find((b) => b.id === transaksi.barang_id);
+    if (barang) {
+      await supabase
+        .from("barang")
+        .update({ stok: barang.stok + transaksi.jumlah })
+        .eq("id", transaksi.barang_id);
+    }
+
+    toast.success("Transaksi berhasil dihapus");
+    setDeleteId(null);
+    fetchData();
   }
 
   function handleDetail(transaksi: BarangKeluar) {
@@ -120,45 +186,95 @@ export default function BarangKeluarPage() {
     setDetailOpen(true);
   }
 
-  const filteredTransaksi = transaksiList.filter((t) =>
-    t.nomor_transaksi.toLowerCase().includes(search.toLowerCase()) ||
-    t.barang?.nama.toLowerCase().includes(search.toLowerCase()) ||
-    t.tujuan.toLowerCase().includes(search.toLowerCase())
+  const filteredTransaksi = transaksiList.filter(
+    (t) =>
+      t.nomor_transaksi.toLowerCase().includes(search.toLowerCase()) ||
+      t.barang?.nama.toLowerCase().includes(search.toLowerCase()) ||
+      t.tujuan.toLowerCase().includes(search.toLowerCase())
   );
+
+  const selectedBarang = barangList.find((b) => b.id === form.barang_id) || null;
+  const jumlahInput = form.jumlah === "" ? 0 : Number(form.jumlah);
+  const stokAkhir = selectedBarang ? selectedBarang.stok - jumlahInput : 0;
+  const stokKurang = selectedBarang && jumlahInput > selectedBarang.stok;
+
+  const totalJumlah = transaksiList.reduce((sum, t) => sum + t.jumlah, 0);
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Barang Keluar</h1>
-          <p className="text-gray-500">Riwayat barang keluar</p>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/50">
+              <ArrowUpFromLine className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">
+                Barang Keluar
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                Riwayat barang keluar gudang
+              </p>
+            </div>
+          </div>
         </div>
-        <Dialog open={open} onOpenChange={(v: boolean | null) => { setOpen(!!v); if (!v) setForm({ tanggal: format(new Date(), "yyyy-MM-dd"), barang_id: "", jumlah: 1, tujuan: "" }); }}>
-          <DialogTrigger render={<Button />}>
+        <Dialog
+          open={open}
+          onOpenChange={(v) => {
+            setOpen(!!v);
+            if (!v)
+              setForm({
+                tanggal: format(new Date(), "yyyy-MM-dd"),
+                barang_id: "",
+                jumlah: "",
+                tujuan: "",
+              });
+          }}
+        >
+          <DialogTrigger
+            render={
+              <Button className="h-10 px-4 rounded-xl bg-primary hover:bg-primary/90" />
+            }
+          >
             <Plus className="h-4 w-4 mr-2" />
-            Tambah Barang Keluar
+            Tambah Keluar
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto rounded-2xl">
             <DialogHeader>
-              <DialogTitle>Tambah Barang Keluar</DialogTitle>
+              <DialogTitle className="text-lg">
+                Tambah Barang Keluar
+              </DialogTitle>
             </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <Label htmlFor="tanggal">Tanggal</Label>
-                <Input
-                  id="tanggal"
-                  type="date"
-                  value={form.tanggal}
-                  onChange={(e) => setForm({ ...form, tanggal: e.target.value })}
-                />
+            <form onSubmit={handleSubmit} className="space-y-4 mt-2">
+              <div className="space-y-2">
+                <Label htmlFor="tanggal" className="text-sm">
+                  Tanggal
+                </Label>
+                <div className="relative">
+                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    id="tanggal"
+                    type="date"
+                    value={form.tanggal}
+                    onChange={(e) =>
+                      setForm({ ...form, tanggal: e.target.value })
+                    }
+                    className="h-10 pl-10 rounded-xl"
+                  />
+                </div>
               </div>
-              <div>
-                <Label htmlFor="barang_id">Barang</Label>
+              <div className="space-y-2">
+                <Label htmlFor="barang_id" className="text-sm">
+                  Barang
+                </Label>
                 <select
                   id="barang_id"
                   value={form.barang_id}
-                  onChange={(e) => setForm({ ...form, barang_id: e.target.value })}
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  onChange={(e) =>
+                    setForm({ ...form, barang_id: e.target.value })
+                  }
+                  className="flex h-10 w-full rounded-xl border border-input bg-transparent px-3 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <option value="">Pilih barang</option>
                   {barangList.map((b) => (
@@ -168,110 +284,345 @@ export default function BarangKeluarPage() {
                   ))}
                 </select>
               </div>
-              <div>
-                <Label htmlFor="jumlah">Jumlah</Label>
+
+              {/* Preview Barang */}
+              {selectedBarang && (
+                <div className="p-3 rounded-xl bg-muted/30 border border-border/50 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Package className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">
+                        {selectedBarang.nama}
+                      </span>
+                    </div>
+                    <span className="text-xs font-mono text-muted-foreground">
+                      {selectedBarang.kode}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="p-2 rounded-lg bg-background">
+                      <p className="text-[10px] text-muted-foreground">Stok</p>
+                      <p className="text-sm font-bold">{selectedBarang.stok}</p>
+                    </div>
+                    <div className="p-2 rounded-lg bg-background">
+                      <p className="text-[10px] text-muted-foreground">Min.</p>
+                      <p className="text-sm font-bold">
+                        {selectedBarang.minimal_stok}
+                      </p>
+                    </div>
+                    <div
+                      className={`p-2 rounded-lg ${
+                        stokKurang
+                          ? "bg-red-50 dark:bg-red-950/50"
+                          : "bg-amber-50 dark:bg-amber-950/50"
+                      }`}
+                    >
+                      <p className="text-[10px] text-muted-foreground">Akhir</p>
+                      <p
+                        className={`text-sm font-bold ${
+                          stokKurang
+                            ? "text-red-600 dark:text-red-400"
+                            : "text-amber-600 dark:text-amber-400"
+                        }`}
+                      >
+                        {stokAkhir}
+                      </p>
+                    </div>
+                  </div>
+                  {stokKurang && (
+                    <div className="flex items-center gap-2 p-2 rounded-lg bg-red-50 dark:bg-red-950/50 text-red-600 dark:text-red-400">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      <p className="text-xs">
+                        Stok tidak mencukupi! Tersisa {selectedBarang.stok} unit
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="jumlah" className="text-sm">
+                  Jumlah
+                </Label>
                 <Input
                   id="jumlah"
-                  type="number"
-                  min="1"
+                  type="text"
+                  inputMode="numeric"
                   value={form.jumlah}
-                  onChange={(e) => setForm({ ...form, jumlah: Number(e.target.value) })}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/[^0-9]/g, "");
+                    setForm({ ...form, jumlah: val });
+                  }}
+                  placeholder="0"
+                  className="h-10 rounded-xl"
                 />
               </div>
-              <div>
-                <Label htmlFor="tujuan">Tujuan / Penerima</Label>
+              <div className="space-y-2">
+                <Label htmlFor="tujuan" className="text-sm">
+                  Tujuan / Penerima
+                </Label>
                 <Input
                   id="tujuan"
                   value={form.tujuan}
-                  onChange={(e) => setForm({ ...form, tujuan: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, tujuan: e.target.value })
+                  }
                   placeholder="Masukkan tujuan atau nama penerima"
+                  className="h-10 rounded-xl"
                 />
               </div>
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? "Menyimpan..." : "Simpan"}
+              <Button
+                type="submit"
+                className="w-full h-11 rounded-xl font-medium"
+                disabled={loading || stokKurang}
+              >
+                {loading ? "Menyimpan..." : "Simpan Transaksi"}
               </Button>
             </form>
           </DialogContent>
         </Dialog>
       </div>
 
-      <Dialog open={detailOpen} onOpenChange={(v: boolean | null) => setDetailOpen(!!v)}>
-        <DialogContent>
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-xl border border-border/50 bg-card p-4">
+          <p className="text-xs text-muted-foreground">Total Transaksi</p>
+          <p className="text-xl font-bold mt-1">{transaksiList.length}</p>
+        </div>
+        <div className="rounded-xl border border-border/50 bg-card p-4">
+          <p className="text-xs text-muted-foreground">Total Barang Keluar</p>
+          <p className="text-xl font-bold mt-1 text-amber-600 dark:text-amber-400">
+            {totalJumlah}
+          </p>
+        </div>
+      </div>
+
+      {/* Detail Dialog */}
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
           <DialogHeader>
-            <DialogTitle>Detail Barang Keluar</DialogTitle>
+            <DialogTitle className="text-lg">
+              Detail Barang Keluar
+            </DialogTitle>
           </DialogHeader>
           {selectedTransaksi && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                <span className="text-gray-500">No Transaksi:</span>
-                <span className="font-medium font-mono">{selectedTransaksi.nomor_transaksi}</span>
-                <span className="text-gray-500">Tanggal:</span>
-                <span className="font-medium">{selectedTransaksi.tanggal}</span>
-                <span className="text-gray-500">Barang:</span>
-                <span className="font-medium">{selectedTransaksi.barang?.nama || "-"}</span>
-                <span className="text-gray-500">Jumlah:</span>
-                <span className="font-medium">{selectedTransaksi.jumlah}</span>
-                <span className="text-gray-500">Tujuan:</span>
-                <span className="font-medium">{selectedTransaksi.tujuan}</span>
+            <div className="space-y-4 mt-2">
+              <div className="flex items-center gap-3 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/50">
+                <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-amber-100 dark:bg-amber-900/50">
+                  <TrendingDown className="h-6 w-6 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div>
+                  <p className="font-medium">
+                    {selectedTransaksi.barang?.nama || "-"}
+                  </p>
+                  <p className="text-sm text-muted-foreground font-mono">
+                    {selectedTransaksi.nomor_transaksi}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: "Tanggal", value: selectedTransaksi.tanggal },
+                  { label: "Tujuan", value: selectedTransaksi.tujuan },
+                  {
+                    label: "Jumlah",
+                    value: `-${selectedTransaksi.jumlah}`,
+                    highlight: true,
+                  },
+                  {
+                    label: "Stok Saat Ini",
+                    value: String(selectedTransaksi.barang?.stok ?? "-"),
+                  },
+                ].map((item) => (
+                  <div key={item.label} className="p-3 rounded-xl bg-muted/30">
+                    <p className="text-xs text-muted-foreground">{item.label}</p>
+                    <p
+                      className={`text-sm font-medium mt-0.5 ${item.highlight ? "text-amber-600 dark:text-amber-400" : ""}`}
+                    >
+                      {item.value}
+                    </p>
+                  </div>
+                ))}
               </div>
             </div>
           )}
         </DialogContent>
       </Dialog>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Search className="h-4 w-4 text-gray-400" />
+      {/* Main Content */}
+      <div className="rounded-2xl border border-border/50 bg-card overflow-hidden">
+        {/* Search Bar */}
+        <div className="p-4 border-b border-border/50">
+          <div className="relative max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Cari transaksi..."
+              placeholder="Cari berdasarkan no transaksi, barang, atau tujuan..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="max-w-sm"
+              className="h-10 pl-10 pr-10 rounded-xl bg-muted/30"
             />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>No</TableHead>
-                <TableHead>No Transaksi</TableHead>
-                <TableHead>Tanggal</TableHead>
-                <TableHead>Barang</TableHead>
-                <TableHead>Jumlah</TableHead>
-                <TableHead>Tujuan</TableHead>
-                <TableHead className="text-right">Aksi</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredTransaksi.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-gray-500">
-                    Tidak ada data barang keluar
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filteredTransaksi.map((transaksi, index) => (
-                  <TableRow key={transaksi.id}>
-                    <TableCell>{index + 1}</TableCell>
-                    <TableCell className="font-mono text-xs">{transaksi.nomor_transaksi}</TableCell>
-                    <TableCell>{transaksi.tanggal}</TableCell>
-                    <TableCell>{transaksi.barang?.nama || "-"}</TableCell>
-                    <TableCell className="font-bold text-orange-600">-{transaksi.jumlah}</TableCell>
-                    <TableCell>{transaksi.tujuan}</TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" onClick={() => handleDetail(transaksi)}>
+          {filteredTransaksi.length > 0 && (
+            <p className="text-xs text-muted-foreground mt-2">
+              Menampilkan {filteredTransaksi.length} dari{" "}
+              {transaksiList.length} transaksi
+            </p>
+          )}
+        </div>
+
+        {/* Table / Cards */}
+        <div className="p-4">
+          {fetching ? (
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-4">
+                  <Skeleton className="h-10 w-10 rounded-xl shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <Skeleton className="h-4 w-32" />
+                    <Skeleton className="h-3 w-20" />
+                  </div>
+                  <Skeleton className="h-6 w-16" />
+                </div>
+              ))}
+            </div>
+          ) : filteredTransaksi.length === 0 ? (
+            <EmptyState
+              icon={ArrowUpFromLine}
+              title="Tidak ada data barang keluar"
+              description={
+                search
+                  ? "Coba kata kunci lain"
+                  : "Mulai catat barang keluar"
+              }
+              actionLabel={search ? undefined : "Tambah Barang Keluar"}
+              onAction={search ? undefined : () => setOpen(true)}
+            />
+          ) : (
+            <>
+              {/* Desktop Table */}
+              <div className="hidden sm:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-12">No</TableHead>
+                      <TableHead>No Transaksi</TableHead>
+                      <TableHead>Tanggal</TableHead>
+                      <TableHead>Barang</TableHead>
+                      <TableHead className="text-center">Jumlah</TableHead>
+                      <TableHead>Tujuan</TableHead>
+                      <TableHead className="text-right">Aksi</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredTransaksi.map((transaksi, index) => (
+                      <TableRow key={transaksi.id}>
+                        <TableCell className="text-muted-foreground">
+                          {index + 1}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {transaksi.nomor_transaksi}
+                        </TableCell>
+                        <TableCell>{transaksi.tanggal}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Package className="h-4 w-4 text-muted-foreground" />
+                            {transaksi.barang?.nama || "-"}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400">
+                            -{transaksi.jumlah}
+                          </span>
+                        </TableCell>
+                        <TableCell>{transaksi.tujuan}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => handleDetail(transaksi)}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => setDeleteId(transaksi.id)}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Mobile Card View */}
+              <div className="sm:hidden space-y-2">
+                {filteredTransaksi.map((transaksi) => (
+                  <MobileCard key={transaksi.id}>
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="font-mono text-xs text-muted-foreground">
+                          {transaksi.nomor_transaksi}
+                        </p>
+                        <p className="font-medium">
+                          {transaksi.barang?.nama || "-"}
+                        </p>
+                      </div>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400">
+                        -{transaksi.jumlah}
+                      </span>
+                    </div>
+                    <MobileCardField label="Tanggal">
+                      {transaksi.tanggal}
+                    </MobileCardField>
+                    <MobileCardField label="Tujuan">
+                      {transaksi.tujuan}
+                    </MobileCardField>
+                    <MobileCardActions>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => handleDetail(transaksi)}
+                      >
                         <Eye className="h-4 w-4" />
                       </Button>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => setDeleteId(transaksi.id)}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </MobileCardActions>
+                  </MobileCard>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <ConfirmationDialog
+        open={!!deleteId}
+        onOpenChange={(v) => {
+          if (!v) setDeleteId(null);
+        }}
+        title="Hapus Transaksi?"
+        description="Transaksi akan dihapus dan stok barang akan ditambahkan kembali sesuai jumlah transaksi ini."
+        onConfirm={handleDelete}
+      />
     </div>
   );
 }

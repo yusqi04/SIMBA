@@ -1,13 +1,39 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Plus, Search, Eye } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { MobileCard, MobileCardField, MobileCardActions } from "@/components/ui/mobile-card";
+import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
+import {
+  Plus,
+  Search,
+  Eye,
+  Trash2,
+  ArrowDownToLine,
+  X,
+  TrendingUp,
+  Calendar,
+  Package,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase/client";
 import { format } from "date-fns";
@@ -20,43 +46,41 @@ export default function BarangMasukPage() {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [selectedTransaksi, setSelectedTransaksi] = useState<BarangMasuk | null>(null);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [selectedTransaksi, setSelectedTransaksi] =
+    useState<BarangMasuk | null>(null);
   const [form, setForm] = useState({
     tanggal: format(new Date(), "yyyy-MM-dd"),
     barang_id: "",
     supplier_id: "",
-    jumlah: 1,
+    jumlah: "",
   });
   const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(true);
 
-  useEffect(() => {
-    fetchTransaksi();
-    fetchBarang();
-    fetchSupplier();
+  const fetchData = useCallback(async () => {
+    setFetching(true);
+    const [transaksiRes, barangRes, supplierRes] = await Promise.all([
+      supabase
+        .from("barang_masuk")
+        .select("*, barang(*), supplier(*)")
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("barang")
+        .select("*")
+        .eq("status", "aktif")
+        .order("nama"),
+      supabase.from("supplier").select("*").order("nama"),
+    ]);
+    setTransaksiList(transaksiRes.data || []);
+    setBarangList(barangRes.data || []);
+    setSupplierList(supplierRes.data || []);
+    setFetching(false);
   }, []);
 
-  async function fetchTransaksi() {
-    const { data, error } = await supabase
-      .from("barang_masuk")
-      .select("*, barang(*), supplier(*)")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      toast.error("Gagal memuat data transaksi");
-      return;
-    }
-    setTransaksiList(data || []);
-  }
-
-  async function fetchBarang() {
-    const { data } = await supabase.from("barang").select("*").eq("status", "aktif").order("nama");
-    setBarangList(data || []);
-  }
-
-  async function fetchSupplier() {
-    const { data } = await supabase.from("supplier").select("*").order("nama");
-    setSupplierList(data || []);
-  }
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -68,48 +92,83 @@ export default function BarangMasukPage() {
       return;
     }
 
-    if (form.jumlah < 1) {
+    const jumlah = form.jumlah === "" ? 0 : Number(form.jumlah);
+    if (jumlah < 1) {
       toast.error("Jumlah minimal 1");
       setLoading(false);
       return;
     }
 
+    const barang = barangList.find((b) => b.id === form.barang_id);
+    if (!barang) {
+      toast.error("Barang tidak ditemukan");
+      setLoading(false);
+      return;
+    }
+
     const nomor_transaksi = `BM-${Date.now()}`;
-
-    const { error: insertError } = await supabase.from("barang_masuk").insert({
-      nomor_transaksi,
-      tanggal: form.tanggal,
-      barang_id: form.barang_id,
-      supplier_id: form.supplier_id,
-      jumlah: form.jumlah,
-    });
-
+    const { error: insertError } = await supabase
+      .from("barang_masuk")
+      .insert({
+        nomor_transaksi,
+        tanggal: form.tanggal,
+        barang_id: form.barang_id,
+        supplier_id: form.supplier_id,
+        jumlah,
+      });
     if (insertError) {
       toast.error("Gagal menyimpan transaksi");
       setLoading(false);
       return;
     }
 
-    const barang = barangList.find((b) => b.id === form.barang_id);
-    if (barang) {
-      const { error: updateError } = await supabase
-        .from("barang")
-        .update({ stok: barang.stok + form.jumlah })
-        .eq("id", form.barang_id);
-
-      if (updateError) {
-        toast.error("Gagal update stok barang");
-        setLoading(false);
-        return;
-      }
+    const { error: updateError } = await supabase
+      .from("barang")
+      .update({ stok: barang.stok + jumlah })
+      .eq("id", form.barang_id);
+    if (updateError) {
+      toast.error("Gagal update stok barang");
+      setLoading(false);
+      return;
     }
 
     toast.success("Barang masuk berhasil ditambahkan");
     setOpen(false);
-    setForm({ tanggal: format(new Date(), "yyyy-MM-dd"), barang_id: "", supplier_id: "", jumlah: 1 });
+    setForm({
+      tanggal: format(new Date(), "yyyy-MM-dd"),
+      barang_id: "",
+      supplier_id: "",
+      jumlah: "",
+    });
     setLoading(false);
-    fetchTransaksi();
-    fetchBarang();
+    fetchData();
+  }
+
+  async function handleDelete() {
+    if (!deleteId) return;
+    const transaksi = transaksiList.find((t) => t.id === deleteId);
+    if (!transaksi) return;
+
+    const { error } = await supabase
+      .from("barang_masuk")
+      .delete()
+      .eq("id", deleteId);
+    if (error) {
+      toast.error("Gagal menghapus transaksi");
+      return;
+    }
+
+    const barang = barangList.find((b) => b.id === transaksi.barang_id);
+    if (barang) {
+      await supabase
+        .from("barang")
+        .update({ stok: Math.max(0, barang.stok - transaksi.jumlah) })
+        .eq("id", transaksi.barang_id);
+    }
+
+    toast.success("Transaksi berhasil dihapus");
+    setDeleteId(null);
+    fetchData();
   }
 
   function handleDetail(transaksi: BarangMasuk) {
@@ -117,44 +176,89 @@ export default function BarangMasukPage() {
     setDetailOpen(true);
   }
 
-  const filteredTransaksi = transaksiList.filter((t) =>
-    t.nomor_transaksi.toLowerCase().includes(search.toLowerCase()) ||
-    t.barang?.nama.toLowerCase().includes(search.toLowerCase())
+  const filteredTransaksi = transaksiList.filter(
+    (t) =>
+      t.nomor_transaksi.toLowerCase().includes(search.toLowerCase()) ||
+      t.barang?.nama.toLowerCase().includes(search.toLowerCase())
   );
+
+  const selectedBarang = barangList.find((b) => b.id === form.barang_id) || null;
+
+  const totalJumlah = transaksiList.reduce((sum, t) => sum + t.jumlah, 0);
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Barang Masuk</h1>
-          <p className="text-gray-500">Riwayat barang masuk</p>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/50">
+              <ArrowDownToLine className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">Barang Masuk</h1>
+              <p className="text-sm text-muted-foreground">
+                Riwayat barang masuk gudang
+              </p>
+            </div>
+          </div>
         </div>
-        <Dialog open={open} onOpenChange={(v: boolean | null) => { setOpen(!!v); if (!v) setForm({ tanggal: format(new Date(), "yyyy-MM-dd"), barang_id: "", supplier_id: "", jumlah: 1 }); }}>
-          <DialogTrigger render={<Button />}>
+        <Dialog
+          open={open}
+          onOpenChange={(v) => {
+            setOpen(!!v);
+            if (!v)
+              setForm({
+                tanggal: format(new Date(), "yyyy-MM-dd"),
+                barang_id: "",
+                supplier_id: "",
+                jumlah: "",
+              });
+          }}
+        >
+          <DialogTrigger
+            render={
+              <Button className="h-10 px-4 rounded-xl bg-primary hover:bg-primary/90" />
+            }
+          >
             <Plus className="h-4 w-4 mr-2" />
-            Tambah Barang Masuk
+            Tambah Masuk
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto rounded-2xl">
             <DialogHeader>
-              <DialogTitle>Tambah Barang Masuk</DialogTitle>
+              <DialogTitle className="text-lg">
+                Tambah Barang Masuk
+              </DialogTitle>
             </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <Label htmlFor="tanggal">Tanggal</Label>
-                <Input
-                  id="tanggal"
-                  type="date"
-                  value={form.tanggal}
-                  onChange={(e) => setForm({ ...form, tanggal: e.target.value })}
-                />
+            <form onSubmit={handleSubmit} className="space-y-4 mt-2">
+              <div className="space-y-2">
+                <Label htmlFor="tanggal" className="text-sm">
+                  Tanggal
+                </Label>
+                <div className="relative">
+                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    id="tanggal"
+                    type="date"
+                    value={form.tanggal}
+                    onChange={(e) =>
+                      setForm({ ...form, tanggal: e.target.value })
+                    }
+                    className="h-10 pl-10 rounded-xl"
+                  />
+                </div>
               </div>
-              <div>
-                <Label htmlFor="barang_id">Barang</Label>
+              <div className="space-y-2">
+                <Label htmlFor="barang_id" className="text-sm">
+                  Barang
+                </Label>
                 <select
                   id="barang_id"
                   value={form.barang_id}
-                  onChange={(e) => setForm({ ...form, barang_id: e.target.value })}
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  onChange={(e) =>
+                    setForm({ ...form, barang_id: e.target.value })
+                  }
+                  className="flex h-10 w-full rounded-xl border border-input bg-transparent px-3 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <option value="">Pilih barang</option>
                   {barangList.map((b) => (
@@ -164,115 +268,325 @@ export default function BarangMasukPage() {
                   ))}
                 </select>
               </div>
-              <div>
-                <Label htmlFor="supplier_id">Supplier</Label>
+
+              {/* Preview Barang */}
+              {selectedBarang && (
+                <div className="p-3 rounded-xl bg-muted/30 border border-border/50 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Package className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">
+                        {selectedBarang.nama}
+                      </span>
+                    </div>
+                    <span className="text-xs font-mono text-muted-foreground">
+                      {selectedBarang.kode}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="p-2 rounded-lg bg-background">
+                      <p className="text-[10px] text-muted-foreground">Stok</p>
+                      <p className="text-sm font-bold">{selectedBarang.stok}</p>
+                    </div>
+                    <div className="p-2 rounded-lg bg-background">
+                      <p className="text-[10px] text-muted-foreground">Min.</p>
+                      <p className="text-sm font-bold">
+                        {selectedBarang.minimal_stok}
+                      </p>
+                    </div>
+                    <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50">
+                      <p className="text-[10px] text-muted-foreground">Akhir</p>
+                      <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                        {selectedBarang.stok +
+                          (form.jumlah === "" ? 0 : Number(form.jumlah))}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="supplier_id" className="text-sm">
+                  Supplier
+                </Label>
                 <select
                   id="supplier_id"
                   value={form.supplier_id}
-                  onChange={(e) => setForm({ ...form, supplier_id: e.target.value })}
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  onChange={(e) =>
+                    setForm({ ...form, supplier_id: e.target.value })
+                  }
+                  className="flex h-10 w-full rounded-xl border border-input bg-transparent px-3 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <option value="">Pilih supplier</option>
                   {supplierList.map((s) => (
-                    <option key={s.id} value={s.id}>{s.nama}</option>
+                    <option key={s.id} value={s.id}>
+                      {s.nama}
+                    </option>
                   ))}
                 </select>
               </div>
-              <div>
-                <Label htmlFor="jumlah">Jumlah</Label>
+              <div className="space-y-2">
+                <Label htmlFor="jumlah" className="text-sm">
+                  Jumlah
+                </Label>
                 <Input
                   id="jumlah"
-                  type="number"
-                  min="1"
+                  type="text"
+                  inputMode="numeric"
                   value={form.jumlah}
-                  onChange={(e) => setForm({ ...form, jumlah: Number(e.target.value) })}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/[^0-9]/g, "");
+                    setForm({ ...form, jumlah: val });
+                  }}
+                  placeholder="0"
+                  className="h-10 rounded-xl"
                 />
               </div>
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? "Menyimpan..." : "Simpan"}
+              <Button
+                type="submit"
+                className="w-full h-11 rounded-xl font-medium"
+                disabled={loading}
+              >
+                {loading ? "Menyimpan..." : "Simpan Transaksi"}
               </Button>
             </form>
           </DialogContent>
         </Dialog>
       </div>
 
-      <Dialog open={detailOpen} onOpenChange={(v: boolean | null) => setDetailOpen(!!v)}>
-        <DialogContent>
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-xl border border-border/50 bg-card p-4">
+          <p className="text-xs text-muted-foreground">Total Transaksi</p>
+          <p className="text-xl font-bold mt-1">{transaksiList.length}</p>
+        </div>
+        <div className="rounded-xl border border-border/50 bg-card p-4">
+          <p className="text-xs text-muted-foreground">Total Barang Masuk</p>
+          <p className="text-xl font-bold mt-1 text-emerald-600 dark:text-emerald-400">
+            {totalJumlah}
+          </p>
+        </div>
+      </div>
+
+      {/* Detail Dialog */}
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
           <DialogHeader>
-            <DialogTitle>Detail Barang Masuk</DialogTitle>
+            <DialogTitle className="text-lg">Detail Barang Masuk</DialogTitle>
           </DialogHeader>
           {selectedTransaksi && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                <span className="text-gray-500">No Transaksi:</span>
-                <span className="font-medium font-mono">{selectedTransaksi.nomor_transaksi}</span>
-                <span className="text-gray-500">Tanggal:</span>
-                <span className="font-medium">{selectedTransaksi.tanggal}</span>
-                <span className="text-gray-500">Barang:</span>
-                <span className="font-medium">{selectedTransaksi.barang?.nama || "-"}</span>
-                <span className="text-gray-500">Supplier:</span>
-                <span className="font-medium">{selectedTransaksi.supplier?.nama || "-"}</span>
-                <span className="text-gray-500">Jumlah:</span>
-                <span className="font-medium">{selectedTransaksi.jumlah}</span>
+            <div className="space-y-4 mt-2">
+              <div className="flex items-center gap-3 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50">
+                <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-emerald-100 dark:bg-emerald-900/50">
+                  <TrendingUp className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <div>
+                  <p className="font-medium">
+                    {selectedTransaksi.barang?.nama || "-"}
+                  </p>
+                  <p className="text-sm text-muted-foreground font-mono">
+                    {selectedTransaksi.nomor_transaksi}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: "Tanggal", value: selectedTransaksi.tanggal },
+                  { label: "Supplier", value: selectedTransaksi.supplier?.nama || "-" },
+                  { label: "Jumlah", value: `+${selectedTransaksi.jumlah}`, highlight: true },
+                  { label: "Stok Saat Ini", value: String(selectedTransaksi.barang?.stok ?? "-") },
+                ].map((item) => (
+                  <div key={item.label} className="p-3 rounded-xl bg-muted/30">
+                    <p className="text-xs text-muted-foreground">{item.label}</p>
+                    <p
+                      className={`text-sm font-medium mt-0.5 ${item.highlight ? "text-emerald-600 dark:text-emerald-400" : ""}`}
+                    >
+                      {item.value}
+                    </p>
+                  </div>
+                ))}
               </div>
             </div>
           )}
         </DialogContent>
       </Dialog>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Search className="h-4 w-4 text-gray-400" />
+      {/* Main Content */}
+      <div className="rounded-2xl border border-border/50 bg-card overflow-hidden">
+        {/* Search Bar */}
+        <div className="p-4 border-b border-border/50">
+          <div className="relative max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Cari transaksi..."
+              placeholder="Cari berdasarkan no transaksi atau nama barang..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="max-w-sm"
+              className="h-10 pl-10 pr-10 rounded-xl bg-muted/30"
             />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>No</TableHead>
-                <TableHead>No Transaksi</TableHead>
-                <TableHead>Tanggal</TableHead>
-                <TableHead>Barang</TableHead>
-                <TableHead>Supplier</TableHead>
-                <TableHead>Jumlah</TableHead>
-                <TableHead className="text-right">Aksi</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredTransaksi.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-gray-500">
-                    Tidak ada data barang masuk
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filteredTransaksi.map((transaksi, index) => (
-                  <TableRow key={transaksi.id}>
-                    <TableCell>{index + 1}</TableCell>
-                    <TableCell className="font-mono text-xs">{transaksi.nomor_transaksi}</TableCell>
-                    <TableCell>{transaksi.tanggal}</TableCell>
-                    <TableCell>{transaksi.barang?.nama || "-"}</TableCell>
-                    <TableCell>{transaksi.supplier?.nama || "-"}</TableCell>
-                    <TableCell className="font-bold text-emerald-600">+{transaksi.jumlah}</TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" onClick={() => handleDetail(transaksi)}>
+          {filteredTransaksi.length > 0 && (
+            <p className="text-xs text-muted-foreground mt-2">
+              Menampilkan {filteredTransaksi.length} dari {transaksiList.length}{" "}
+              transaksi
+            </p>
+          )}
+        </div>
+
+        {/* Table / Cards */}
+        <div className="p-4">
+          {fetching ? (
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-4">
+                  <Skeleton className="h-10 w-10 rounded-xl shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <Skeleton className="h-4 w-32" />
+                    <Skeleton className="h-3 w-20" />
+                  </div>
+                  <Skeleton className="h-6 w-16" />
+                </div>
+              ))}
+            </div>
+          ) : filteredTransaksi.length === 0 ? (
+            <EmptyState
+              icon={ArrowDownToLine}
+              title="Tidak ada data barang masuk"
+              description={
+                search
+                  ? "Coba kata kunci lain"
+                  : "Mulai catat barang masuk"
+              }
+              actionLabel={search ? undefined : "Tambah Barang Masuk"}
+              onAction={search ? undefined : () => setOpen(true)}
+            />
+          ) : (
+            <>
+              {/* Desktop Table */}
+              <div className="hidden sm:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-12">No</TableHead>
+                      <TableHead>No Transaksi</TableHead>
+                      <TableHead>Tanggal</TableHead>
+                      <TableHead>Barang</TableHead>
+                      <TableHead>Supplier</TableHead>
+                      <TableHead className="text-center">Jumlah</TableHead>
+                      <TableHead className="text-right">Aksi</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredTransaksi.map((transaksi, index) => (
+                      <TableRow key={transaksi.id}>
+                        <TableCell className="text-muted-foreground">
+                          {index + 1}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {transaksi.nomor_transaksi}
+                        </TableCell>
+                        <TableCell>{transaksi.tanggal}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Package className="h-4 w-4 text-muted-foreground" />
+                            {transaksi.barang?.nama || "-"}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {transaksi.supplier?.nama || "-"}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-400">
+                            +{transaksi.jumlah}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => handleDetail(transaksi)}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => setDeleteId(transaksi.id)}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Mobile Card View */}
+              <div className="sm:hidden space-y-2">
+                {filteredTransaksi.map((transaksi) => (
+                  <MobileCard key={transaksi.id}>
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="font-mono text-xs text-muted-foreground">
+                          {transaksi.nomor_transaksi}
+                        </p>
+                        <p className="font-medium">
+                          {transaksi.barang?.nama || "-"}
+                        </p>
+                      </div>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-400">
+                        +{transaksi.jumlah}
+                      </span>
+                    </div>
+                    <MobileCardField label="Tanggal">
+                      {transaksi.tanggal}
+                    </MobileCardField>
+                    <MobileCardField label="Supplier">
+                      {transaksi.supplier?.nama || "-"}
+                    </MobileCardField>
+                    <MobileCardActions>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => handleDetail(transaksi)}
+                      >
                         <Eye className="h-4 w-4" />
                       </Button>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => setDeleteId(transaksi.id)}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </MobileCardActions>
+                  </MobileCard>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <ConfirmationDialog
+        open={!!deleteId}
+        onOpenChange={(v) => {
+          if (!v) setDeleteId(null);
+        }}
+        title="Hapus Transaksi?"
+        description="Transaksi akan dihapus dan stok barang akan dikurangi sesuai jumlah transaksi ini."
+        onConfirm={handleDelete}
+      />
     </div>
   );
 }
