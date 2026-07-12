@@ -218,7 +218,7 @@ export default function BarangPage() {
       const aVal = a[sortKey];
       const bVal = b[sortKey];
       const dir = sortDir === "asc" ? 1 : -1;
-      if (typeof aVal === "string") return aVal.localeCompare(bVal) * dir;
+      if (typeof aVal === "string") return aVal.localeCompare(bVal as string) * dir;
       return ((aVal as number) - (bVal as number)) * dir;
     });
 

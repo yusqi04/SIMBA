@@ -374,7 +374,7 @@ export default function BarangKeluarPage() {
               <Button
                 type="submit"
                 className="w-full h-11 rounded-xl font-medium"
-                disabled={loading || stokKurang}
+                disabled={loading || !!stokKurang}
               >
                 {loading ? "Menyimpan..." : "Simpan Transaksi"}
               </Button>

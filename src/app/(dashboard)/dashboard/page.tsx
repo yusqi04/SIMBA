@@ -154,12 +154,12 @@ export default function DashboardPage() {
       const masukPerMonth = new Array(6).fill(0);
       const keluarPerMonth = new Array(6).fill(0);
 
-      (masukData || []).forEach((item: BarangMasuk) => {
+      (masukData || []).forEach((item) => {
         const idx = getMonthIndex(item.tanggal);
         if (idx >= 0 && idx < 6) masukPerMonth[idx] += item.jumlah;
       });
 
-      (keluarData || []).forEach((item: BarangKeluar) => {
+      (keluarData || []).forEach((item) => {
         const idx = getMonthIndex(item.tanggal);
         if (idx >= 0 && idx < 6) keluarPerMonth[idx] += item.jumlah;
       });
