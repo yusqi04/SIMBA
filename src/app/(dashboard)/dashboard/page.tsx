@@ -302,7 +302,7 @@ export default function DashboardPage() {
 
       {/* Stat Cards */}
       {loading ? (
-        <div className="grid gap-4 grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5">
           {Array.from({ length: 5 }).map((_, i) => (
             <Card key={i}>
               <CardContent className="pt-5 pb-5">
@@ -318,7 +318,7 @@ export default function DashboardPage() {
           ))}
         </div>
       ) : (
-        <div className="grid gap-4 grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5">
           {statCards.map((stat) => (
             <Card
               key={stat.title}
